@@ -2288,7 +2288,7 @@
 //
 // G2/G3 Arc Support
 //
-#define ARC_SUPPORT                   // Requires ~3226 bytes
+//#define ARC_SUPPORT                 // Requires ~3226 bytes. Disabled to make room for UBL, keep arc fitting off in the slicer
 #if ENABLED(ARC_SUPPORT)
   #define MIN_ARC_SEGMENT_MM      0.1 // (mm) Minimum length of each arc segment
   #define MAX_ARC_SEGMENT_MM      1.0 // (mm) Maximum length of each arc segment
@@ -3672,7 +3672,7 @@
 /**
  * Extra options for the M114 "Current Position" report
  */
-#define M114_DETAIL         // Use 'M114` for details to check planner calculations
+//#define M114_DETAIL       // Use 'M114` for details to check planner calculations. Disabled to make room for UBL
 //#define M114_REALTIME       // Real current position based on forward kinematics
 //#define M114_LEGACY         // M114 used to synchronize on every call. Enable if needed.
 

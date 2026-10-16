@@ -12,9 +12,27 @@ The printer's SD card is exposed to the Raspbian Pi running OctoPrint over USB (
 4. Sends `M997` to reboot the board, so the bootloader flashes the new firmware.
 5. Checks that the bootloader renamed the file to `FIRMWARE.CUR` and reconnects OctoPrint. The previous firmware is kept as `FIRMWARE.OLD` on the card.
 
-Requirements: an `octopi` entry in `~/.ssh/config` with key-based login, and passwordless `sudo` on the Pi. Run `./flash-firmware.py --setup` once: it requests an OctoPrint API key (approve it in the OctoPrint web UI) and pins the Pi's self-signed TLS certificate, after checking it against the certificate file on the Pi over SSH. The key is stored in `~/.config/marlin-flash/config.json`. Use `--dry-run` to run every check without flashing, or `--no-build` to flash the existing build.
+Requirements: an `octopi` entry in `~/.ssh/config` with key-based login, and passwordless `sudo` on the Pi. Run `./flash-firmware.py --setup` once: it requests an OctoPrint API key (approve it in the OctoPrint web UI). OctoPrint's TLS certificate is verified against my own CA only (`/etc/ca-certificates/trust-source/anchors/ca.crt`, override with `--ca-file`). The key is stored in `~/.config/marlin-flash/config.json`. Use `--dry-run` to run every check without flashing, or `--no-build` to flash the existing build.
 
-When the firmware version changes, `EEPROM_AUTO_INIT` resets the stored settings to the values in `Configuration.h`. Afterwards, check them with `M503` and re-probe the bed (`G28`, `G29`, `M500`).
+When the firmware version or EEPROM layout changes, `EEPROM_AUTO_INIT` resets the stored settings to the values in `Configuration.h`, which also deletes the bed mesh. Afterwards, check the settings with `M503` and create a new mesh.
+
+## Bed Leveling (UBL)
+
+The firmware uses Unified Bed Leveling. To make room for it on the 256K STM32F103RC, `ARC_SUPPORT`, `M48` and `M114_DETAIL` are disabled. Creating a mesh (the bed and nozzle are preheated automatically):
+
+```gcode
+G28        ; home
+G29 P1     ; probe all points the probe can reach
+G29 P3     ; extrapolate the unreachable points (repeat until the mesh is complete)
+G29 T      ; print the mesh as a topology map
+G29 S0     ; save it to slot 0
+G29 F10    ; fade out leveling over 10 mm
+G29 A      ; activate
+M500       ; store it in EEPROM
+G26        ; optional: print a mesh validation pattern
+```
+
+The slicer's start G-code loads the mesh (`G29 L0`) and corrects it for tilt with a quick 3-point probe (`G29 J`) before every print, which compensates for the two Z spindles drifting apart.
 
 ---
 
