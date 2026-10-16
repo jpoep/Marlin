@@ -1196,7 +1196,7 @@
  * Override with M92
  *                                      X, Y, Z [, I [, J [, K...]]], E0 [, E1[, E2...]]
  */
-#define DEFAULT_AXIS_STEPS_PER_UNIT { 100.3, 99.0, 399, 102 }
+#define DEFAULT_AXIS_STEPS_PER_UNIT { 100, 100, 399, 102 }  // X/Y: 200 steps * 16 microsteps / (2 mm GT2 * 16T pulley)
 
 /**
  * Default Max Feed Rate (linear=mm/s, rotational=°/s)
