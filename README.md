@@ -1,3 +1,23 @@
+# My Marlin configuration for Anet A8 running on an SKR Mini e3 V1.2 board
+
+This repo contains configuration changes for my printer to allow for easy merging of new Marlin releases.
+
+## Automatic Flashing
+
+The printer's SD card is exposed to the Raspbian Pi running OctoPrint over USB (the `STM32F103RC_btt_USB` build), so new firmware can be dropped onto it remotely. `Ctrl+Shift+B` runs the default build task, which calls `flash-firmware.py`:
+
+1. Builds the firmware with PlatformIO.
+2. Asks OctoPrint whether the printer is busy, and refuses to continue during a print.
+3. Copies `firmware.bin` onto the SD card through the Pi and verifies its checksum.
+4. Sends `M997` to reboot the board, so the bootloader flashes the new firmware.
+5. Checks that the bootloader renamed the file to `FIRMWARE.CUR` and reconnects OctoPrint. The previous firmware is kept as `FIRMWARE.OLD` on the card.
+
+Requirements: an `octopi` entry in `~/.ssh/config` with key-based login, and passwordless `sudo` on the Pi. Run `./flash-firmware.py --setup` once: it requests an OctoPrint API key (approve it in the OctoPrint web UI) and pins the Pi's self-signed TLS certificate, after checking it against the certificate file on the Pi over SSH. The key is stored in `~/.config/marlin-flash/config.json`. Use `--dry-run` to run every check without flashing, or `--no-build` to flash the existing build.
+
+When the firmware version changes, `EEPROM_AUTO_INIT` resets the stored settings to the values in `Configuration.h`. Afterwards, check them with `M503` and re-probe the bed (`G28`, `G29`, `M500`).
+
+---
+
 <p align="center"><img src="buildroot/share/pixmaps/logo/marlin-outrun-nf-500.png" height="250" alt="MarlinFirmware's logo" /></p>
 
 <h1 align="center">Marlin 3D Printer Firmware</h1>

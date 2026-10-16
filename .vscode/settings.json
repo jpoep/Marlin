@@ -1,0 +1,6 @@
+{
+    "cmake.configureOnOpen": false,
+    // The automatic IntelliSense rebuild runs PlatformIO concurrently with builds and
+    // wipes .pio/build mid-compile. Rebuild it manually via "PlatformIO: Rebuild IntelliSense Index".
+    "platformio-ide.autoRebuildAutocompleteIndex": false
+}

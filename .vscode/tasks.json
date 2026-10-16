@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build and Flash Firmware",
+            "command": "${workspaceFolder}/flash-firmware.py",
+            "type": "shell",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Built Firmware",
+            "command": "${workspaceFolder}/flash-firmware.py --no-build",
+            "type": "shell",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Firmware (Dry Run)",
+            "command": "${workspaceFolder}/flash-firmware.py --dry-run",
+            "type": "shell",
+            "problemMatcher": []
+        }
+    ]
+}
