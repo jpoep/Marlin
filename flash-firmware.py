@@ -10,9 +10,10 @@ sees the printer's SD card as a USB drive. This script:
   4. reboots the board with M997 so the bootloader flashes the new firmware
   5. verifies the bootloader consumed firmware.bin and reconnects OctoPrint
 
-Run `./flash-firmware.py --setup` once to request an OctoPrint API key and pin the
-Pi's TLS certificate. Everything else is derived from the `octopi` entry in
-~/.ssh/config. Only the Python standard library is used.
+Run `./flash-firmware.py --setup` once to request an OctoPrint API key. OctoPrint's
+TLS certificate is verified against your own CA only (see DEFAULT_CA_FILE).
+Everything else is derived from the `octopi` entry in ~/.ssh/config. Only the
+Python standard library is used.
 """
 
 import argparse
@@ -32,7 +33,8 @@ REPO_DIR = Path(__file__).resolve().parent
 DEFAULT_ENV = "STM32F103RC_btt_USB"
 DEFAULT_SSH_HOST = "octopi"
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "marlin-flash" / "config.json"
-HAPROXY_CERT = "/etc/haproxy/certs/haproxy.pem"
+# The CA that signed the Pi's haproxy certificate; nothing else is trusted
+DEFAULT_CA_FILE = "/etc/ca-certificates/trust-source/anchors/ca.crt"
 
 # Stable device names on the Pi (independent of /dev/sdX and /dev/ttyACMX numbering)
 SD_GLOB = "/dev/disk/by-id/usb-MARLIN_*-part1"
@@ -164,47 +166,33 @@ devs=({SERIAL_GLOB})
 [ ${{#devs[@]}} -gt 0 ]
 """
 
-REMOTE_CERT_FINGERPRINT = f"""
-sudo openssl x509 -in {HAPROXY_CERT} -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr A-F a-f
-"""
-
 
 # --------------------------------------------------------------------------- #
 # OctoPrint API
 # --------------------------------------------------------------------------- #
 
 class OctoPrint:
-    """Minimal OctoPrint REST client that pins the Pi's self-signed certificate."""
+    """Minimal OctoPrint REST client that only trusts the given CA."""
 
-    def __init__(self, host, cert_sha256, api_key=None):
+    def __init__(self, host, ca_file, api_key=None):
         self.host = host
-        self.cert_sha256 = cert_sha256
         self.api_key = api_key
-        # Hostname/CA validation is replaced by pinning the exact certificate below
-        self.ctx = ssl.create_default_context()
-        self.ctx.check_hostname = False
-        self.ctx.verify_mode = ssl.CERT_NONE
-
-    @staticmethod
-    def served_fingerprint(host):
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        conn = http.client.HTTPSConnection(host, timeout=10, context=ctx)
-        conn.connect()
         try:
-            return hashlib.sha256(conn.sock.getpeercert(binary_form=True)).hexdigest()
-        finally:
-            conn.close()
+            # Trust exactly this CA (not the system store); hostname checking stays on
+            self.ctx = ssl.create_default_context(cafile=ca_file)
+        except (FileNotFoundError, ssl.SSLError) as e:
+            raise FlashError(f"Cannot load CA certificate {ca_file}: {e}")
+        # Python 3.13+ enables strict RFC 5280 checks, which reject the home CA because it
+        # lacks a keyUsage extension. The chain and hostname are still fully verified.
+        self.ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
     def request(self, method, path, body=None):
         conn = http.client.HTTPSConnection(self.host, timeout=15, context=self.ctx)
         try:
-            conn.connect()
-            served = hashlib.sha256(conn.sock.getpeercert(binary_form=True)).hexdigest()
-            if served != self.cert_sha256:
-                raise FlashError(f"OctoPrint TLS certificate changed (got {served}). "
-                                 "If you replaced it on purpose, re-run with --setup.")
+            try:
+                conn.connect()
+            except ssl.SSLCertVerificationError as e:
+                raise FlashError(f"OctoPrint's TLS certificate is not trusted: {e.verify_message}")
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["X-Api-Key"] = self.api_key
@@ -260,19 +248,11 @@ def save_config(config):
 # Commands
 # --------------------------------------------------------------------------- #
 
-def setup(pi):
+def setup(pi, ca_file):
     host = pi.hostname()
 
-    step("Pinning OctoPrint's TLS certificate")
-    expected = pi.run(REMOTE_CERT_FINGERPRINT).stdout.strip()
-    served = OctoPrint.served_fingerprint(host)
-    if served != expected:
-        raise FlashError(f"Certificate served at {host} ({served}) does not match "
-                         f"{HAPROXY_CERT} on the Pi ({expected}). Not trusting it.")
-    info(f"sha256 {served} (verified against the Pi over SSH)")
-
     step("Requesting an OctoPrint API key")
-    octo = OctoPrint(host, served)
+    octo = OctoPrint(host, ca_file)
     status, _ = octo.request("GET", "/plugin/appkeys/probe")
     if status != 204:
         raise FlashError("OctoPrint's Application Keys plugin is not available")
@@ -285,7 +265,7 @@ def setup(pi):
     while time.monotonic() < deadline:
         status, data = octo.request("GET", f"/plugin/appkeys/request/{token}")
         if status == 200:
-            save_config({"cert_sha256": served, "api_key": data["api_key"]})
+            save_config({"api_key": data["api_key"], "ca_file": ca_file})
             info(f"Saved to {CONFIG_PATH}")
             return
         if status == 404:
@@ -323,7 +303,7 @@ def wait_for_reboot(pi):
 
 def flash(pi, args):
     config = load_config()
-    octo = OctoPrint(pi.hostname(), config["cert_sha256"], config["api_key"])
+    octo = OctoPrint(pi.hostname(), config.get("ca_file", DEFAULT_CA_FILE), config["api_key"])
 
     firmware = REPO_DIR / ".pio" / "build" / args.env / "firmware.bin"
     if not args.no_build:
@@ -389,7 +369,8 @@ def flash(pi, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--setup", action="store_true", help="request an OctoPrint API key and pin its certificate")
+    parser.add_argument("--setup", action="store_true", help="request an OctoPrint API key")
+    parser.add_argument("--ca-file", default=DEFAULT_CA_FILE, help=f"CA to verify OctoPrint with during --setup (default: {DEFAULT_CA_FILE})")
     parser.add_argument("--dry-run", action="store_true", help="build and run all checks, but do not flash")
     parser.add_argument("--no-build", action="store_true", help="flash the existing build without rebuilding")
     parser.add_argument("--env", default=DEFAULT_ENV, help=f"PlatformIO environment (default: {DEFAULT_ENV})")
@@ -399,7 +380,7 @@ def main():
     pi = Pi(args.ssh_host)
     try:
         if args.setup:
-            setup(pi)
+            setup(pi, args.ca_file)
         else:
             flash(pi, args)
     except FlashError as e:
